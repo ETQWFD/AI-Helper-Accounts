@@ -1,32 +1,23 @@
-// AI帮助器 账号管理后台 - 核心逻辑 v3
+// AI帮助器 账号管理后台 v4
 const API_BASE = `https://api.github.com/repos/${CONFIG.GITHUB_OWNER}/${CONFIG.GITHUB_REPO}`;
 const RAW_BASE = `https://raw.githubusercontent.com/${CONFIG.GITHUB_OWNER}/${CONFIG.GITHUB_REPO}/${CONFIG.GITHUB_BRANCH}`;
 
 let isLoggedIn = false;
 let accounts = [];
-let workingProxy = ""; // 缓存可用代理
+let workingProxy = "";
+let isCreating = false; // 防重复提交
 
-// ========== 代理URL生成 ==========
+// ========== 代理URL ==========
 function getApiUrls(path, preferDirect) {
     const direct = `${API_BASE}/contents/${path}?ref=${CONFIG.GITHUB_BRANCH}`;
     const urls = [];
     if (preferDirect) {
-        // 写操作优先直连（代理可能不支持PUT/DELETE或剥离认证头）
         urls.push(direct);
-        for (const p of CONFIG.PROXIES) {
-            if (p) urls.push(p + direct);
-        }
+        for (const p of CONFIG.PROXIES) { if (p) urls.push(p + direct); }
     } else {
-        // 读操作优先用已验证的代理
-        if (workingProxy) {
-            urls.push(workingProxy + direct);
-            urls.push(direct);
-        } else {
-            urls.push(direct);
-        }
-        for (const p of CONFIG.PROXIES) {
-            if (p && p !== workingProxy) urls.push(p + direct);
-        }
+        if (workingProxy) { urls.push(workingProxy + direct); urls.push(direct); }
+        else urls.push(direct);
+        for (const p of CONFIG.PROXIES) { if (p && p !== workingProxy) urls.push(p + direct); }
     }
     return urls;
 }
@@ -34,17 +25,13 @@ function getApiUrls(path, preferDirect) {
 function getRawUrls(path) {
     const direct = `${RAW_BASE}/${path}`;
     const urls = [];
-    if (workingProxy && workingProxy !== "https://raw.gitmirror.com/") {
-        urls.push(workingProxy + direct);
-    }
+    if (workingProxy && workingProxy !== "https://raw.gitmirror.com/") urls.push(workingProxy + direct);
     urls.push(direct);
     for (const p of CONFIG.RAW_PROXIES) {
         if (p === "https://raw.gitmirror.com/") {
             const u = direct.replace("https://raw.githubusercontent.com/", "https://raw.gitmirror.com/");
             if (!urls.includes(u)) urls.push(u);
-        } else if (p && p !== workingProxy) {
-            urls.push(p + direct);
-        }
+        } else if (p && p !== workingProxy) urls.push(p + direct);
     }
     return urls;
 }
@@ -52,164 +39,112 @@ function getRawUrls(path) {
 // ========== Token ==========
 function getToken() { return localStorage.getItem('aihelper_github_token') || ''; }
 function setToken(t) { localStorage.setItem('aihelper_github_token', t); }
-function clearToken() { localStorage.removeItem('aihelper_github_token'); }
 
-// ========== 纯JS SHA-256 ==========
+// ========== SHA-256 ==========
 function sha256(ascii) {
-    function rightRotate(value, amount) { return (value >>> amount) | (value << (32 - amount)); }
-    var mathPow = Math.pow, maxWord = mathPow(2, 32), lengthProperty = 'length', i, j;
-    var result = '', words = [], asciiBitLength = ascii[lengthProperty] * 8;
-    var hash = sha256.h = sha256.h || [], k = sha256.k = sha256.k || [];
-    var primeCounter = k[lengthProperty], isComposite = {};
-    for (var candidate = 2; primeCounter < 64; candidate++) {
-        if (!isComposite[candidate]) {
-            for (i = 0; i < 313; i += candidate) isComposite[i] = candidate;
-            hash[primeCounter] = (mathPow(candidate, .5) * maxWord) | 0;
-            k[primeCounter++] = (mathPow(candidate, 1 / 3) * maxWord) | 0;
-        }
-    }
-    ascii += '\x80';
-    while (ascii[lengthProperty] % 64 - 56) ascii += '\x00';
-    for (i = 0; i < ascii[lengthProperty]; i++) {
-        j = ascii.charCodeAt(i);
-        if (j >> 8) return;
-        words[i >> 2] |= j << ((3 - i) % 4) * 8;
-    }
-    words[words[lengthProperty]] = ((asciiBitLength / maxWord) | 0);
-    words[words[lengthProperty]] = (asciiBitLength);
-    for (j = 0; j < words[lengthProperty];) {
-        var w = words.slice(j, j += 16), oldHash = hash;
-        hash = hash.slice(0, 8);
+    function rr(v, a) { return (v >>> a) | (v << (32 - a)); }
+    var mp = Math.pow, mw = mp(2, 32), lp = 'length', i, j, res = '', w = [], abl = ascii[lp] * 8;
+    var h = sha256.h = sha256.h || [], k = sha256.k = sha256.k || [], pc = k[lp], ic = {};
+    for (var c = 2; pc < 64; c++) { if (!ic[c]) { for (i = 0; i < 313; i += c) ic[i] = c; h[pc] = (mp(c, .5) * mw) | 0; k[pc++] = (mp(c, 1 / 3) * mw) | 0; } }
+    ascii += '\x80'; while (ascii[lp] % 64 - 56) ascii += '\x00';
+    for (i = 0; i < ascii[lp]; i++) { j = ascii.charCodeAt(i); if (j >> 8) return; w[i >> 2] |= j << ((3 - i) % 4) * 8; }
+    w[w[lp]] = ((abl / mw) | 0); w[w[lp]] = abl;
+    for (j = 0; j < w[lp];) {
+        var wd = w.slice(j, j += 16), oh = h; h = h.slice(0, 8);
         for (i = 0; i < 64; i++) {
-            var w15 = w[i - 15], w2 = w[i - 2];
-            var a = hash[0], e = hash[4];
-            var temp1 = hash[7] + (rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25)) + ((e & hash[5]) ^ ((~e) & hash[6])) + k[i] + (w[i] = (i < 16) ? w[i] : (w[i - 16] + (rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3)) + w[i - 7] + (rightRotate(w[i - 2], 17) ^ rightRotate(w[i - 2], 19) ^ (w[i - 2] >>> 10))) | 0);
-            var temp2 = (rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22)) + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
-            hash = [(temp1 + temp2) | 0].concat(hash);
-            hash[4] = (hash[4] + temp1) | 0;
+            var w15 = wd[i - 15], w2 = wd[i - 2], a = h[0], e = h[4];
+            var t1 = h[7] + (rr(e, 6) ^ rr(e, 11) ^ rr(e, 25)) + ((e & h[5]) ^ ((~e) & h[6])) + k[i] + (wd[i] = (i < 16) ? wd[i] : (wd[i - 16] + (rr(w15, 7) ^ rr(w15, 18) ^ (w15 >>> 3)) + wd[i - 7] + (rr(wd[i - 2], 17) ^ rr(wd[i - 2], 19) ^ (wd[i - 2] >>> 10))) | 0);
+            var t2 = (rr(a, 2) ^ rr(a, 13) ^ rr(a, 22)) + ((a & h[1]) ^ (a & h[2]) ^ (h[1] & h[2]));
+            h = [(t1 + t2) | 0].concat(h); h[4] = (h[4] + t1) | 0;
         }
-        for (i = 0; i < 8; i++) hash[i] = (hash[i] + oldHash[i]) | 0;
+        for (i = 0; i < 8; i++) h[i] = (h[i] + oh[i]) | 0;
     }
-    for (i = 0; i < 8; i++) {
-        for (j = 3; j + 1; j--) {
-            var b = (hash[i] >> (j * 8)) & 255;
-            result += (b < 16 ? 0 : '') + b.toString(16);
-        }
-    }
-    return result;
+    for (i = 0; i < 8; i++) for (j = 3; j + 1; j--) { var b = (h[i] >> (j * 8)) & 255; res += (b < 16 ? 0 : '') + b.toString(16); }
+    return res;
 }
 
 function b64encode(str) { return btoa(unescape(encodeURIComponent(str))); }
-function b64decode(str) { return decodeURIComponent(escape(atob(str))); }
 
 function showToast(msg) {
-    const old = document.querySelector('.toast');
-    if (old) old.remove();
-    const t = document.createElement('div');
-    t.className = 'toast';
-    t.textContent = msg;
-    document.body.appendChild(t);
-    setTimeout(() => t.remove(), 3000);
+    const old = document.querySelector('.toast'); if (old) old.remove();
+    const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg;
+    document.body.appendChild(t); setTimeout(() => t.remove(), 3500);
 }
 
-function setSyncStatus(text) {
-    document.getElementById('syncStatus').textContent = '同步状态: ' + text;
-}
+function setSyncStatus(text) { document.getElementById('syncStatus').textContent = '同步状态: ' + text; }
 
-// ========== GitHub API（智能代理） ==========
+// ========== GitHub API ==========
 async function githubApi(method, path, body) {
     const isWrite = (method === 'PUT' || method === 'DELETE');
     const urls = getApiUrls(path, isWrite);
     const opts = {
         method: method,
-        headers: {
-            'Authorization': `token ${getToken()}`,
-            'Accept': 'application/vnd.github.v3+json',
-            'Content-Type': 'application/json'
-        }
+        headers: { 'Authorization': `token ${getToken()}`, 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
     };
     if (body) opts.body = JSON.stringify(body);
-
-    const timeout = isWrite ? 8000 : 10000;
+    const timeout = isWrite ? 10000 : 8000;
     let lastError = '';
-
     for (let ui = 0; ui < urls.length; ui++) {
         try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), timeout);
-            opts.signal = controller.signal;
+            const ctrl = new AbortController();
+            const tid = setTimeout(() => ctrl.abort(), timeout);
+            opts.signal = ctrl.signal;
             const resp = await fetch(urls[ui], opts);
-            clearTimeout(timeoutId);
+            clearTimeout(tid);
             const text = await resp.text();
-            let data = {};
-            try { data = JSON.parse(text); } catch { data = { message: text.substring(0, 200) }; }
-
+            let data = {}; try { data = JSON.parse(text); } catch { data = { message: text.substring(0, 200) }; }
             if (resp.ok) {
-                // 缓存可用代理（读操作）
-                if (!isWrite && ui > 0) {
-                    for (const p of CONFIG.PROXIES) {
-                        if (p && urls[ui].startsWith(p)) { workingProxy = p; break; }
-                    }
-                }
+                if (!isWrite && ui > 0) { for (const p of CONFIG.PROXIES) { if (p && urls[ui].startsWith(p)) { workingProxy = p; break; } } }
                 return { ok: true, data };
             }
-            if (resp.status === 401) throw new Error('Bad credentials - Token无效');
+            if (resp.status === 401) throw new Error('Bad credentials(401) - Token无效或已过期');
             if (resp.status === 403) {
-                if (data.message && data.message.includes('rate limit')) {
-                    throw new Error('GitHub API限流，请等几分钟再试（或换Token）');
-                }
-                throw new Error('权限不足 - Token需要repo权限');
+                if (data.message && data.message.includes('rate limit')) throw new Error('API限流，请等1分钟再试');
+                throw new Error('权限不足(403) - Token需要repo权限');
             }
-            if (resp.status === 404) {
-                if (isWrite) { lastError = '文件不存在(404)'; continue; }
-                throw new Error('文件不存在(404)');
-            }
-            lastError = data.message || `HTTP ${resp.status}`;
+            if (resp.status === 404) { if (isWrite) { lastError = '404-无权限或不存在'; continue; } throw new Error('404-不存在'); }
+            if (resp.status === 422) throw new Error('422-文件已存在或参数错误');
+            lastError = `HTTP${resp.status}: ${data.message || ''}`;
             if (resp.status < 500 && !isWrite) break;
         } catch (e) {
             lastError = e.message.includes('Abort') ? '连接超时' : e.message;
-            if (e.message.includes('Bad credentials') || e.message.includes('限流') || e.message.includes('权限不足')) throw e;
+            if (e.message.includes('Bad credentials') || e.message.includes('限流') || e.message.includes('权限不足') || e.message.includes('422')) throw e;
         }
     }
-    throw new Error(lastError || '所有连接方式均失败');
+    throw new Error(lastError || '所有连接失败');
 }
 
 async function getFileSha(path) {
-    try {
-        const { data } = await githubApi('GET', path);
-        return data.sha;
-    } catch { return null; }
+    try { const { data } = await githubApi('GET', path); return data.sha; } catch { return null; }
 }
 
+// 优化：新文件直接PUT，不先GET sha（省一半API调用）
 async function createFile(path, content, message) {
-    const body = {
-        message: message || `Update ${path}`,
-        content: b64encode(content),
-        branch: CONFIG.GITHUB_BRANCH
-    };
-    const sha = await getFileSha(path);
-    if (sha) body.sha = sha;
-    await githubApi('PUT', path, body);
+    const body = { message: message || `Update ${path}`, content: b64encode(content), branch: CONFIG.GITHUB_BRANCH };
+    try {
+        await githubApi('PUT', path, body);
+    } catch (e) {
+        if (e.message.includes('422') || e.message.includes('已存在')) {
+            const sha = await getFileSha(path);
+            if (sha) { body.sha = sha; await githubApi('PUT', path, body); }
+            else throw e;
+        } else throw e;
+    }
 }
 
 async function deleteFile(path) {
     const sha = await getFileSha(path);
     if (!sha) return;
-    await githubApi('DELETE', path, {
-        message: `Delete ${path}`,
-        sha: sha,
-        branch: CONFIG.GITHUB_BRANCH
-    });
+    await githubApi('DELETE', path, { message: `Delete ${path}`, sha: sha, branch: CONFIG.GITHUB_BRANCH });
 }
 
 async function readRawFile(path) {
-    const urls = getRawUrls(path);
-    for (const url of urls) {
+    for (const url of getRawUrls(path)) {
         try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 6000);
-            const resp = await fetch(url, { signal: controller.signal });
-            clearTimeout(timeoutId);
+            const ctrl = new AbortController();
+            const tid = setTimeout(() => ctrl.abort(), 5000);
+            const resp = await fetch(url, { signal: ctrl.signal });
+            clearTimeout(tid);
             if (resp.ok) return await resp.text();
         } catch { /* next */ }
     }
@@ -220,15 +155,14 @@ async function readRawFile(path) {
 async function testToken() {
     const tokenInput = document.getElementById('githubToken').value.trim();
     const resultEl = document.getElementById('tokenTestResult');
-    if (!tokenInput) { resultEl.style.color = '#e74c3c'; resultEl.textContent = '请先输入 Token'; return; }
-    resultEl.style.color = '#888';
-    resultEl.textContent = '测试中...';
-    setToken(tokenInput);
-    workingProxy = ""; // 重置代理缓存
+    if (!tokenInput) { resultEl.style.color = '#e74c3c'; resultEl.textContent = '请先输入Token'; return; }
+    resultEl.style.color = '#888'; resultEl.textContent = '测试中...';
+    setToken(tokenInput); workingProxy = "";
     try {
+        // 测试读权限
         await githubApi('GET', 'README.md');
         resultEl.style.color = '#27ae60';
-        resultEl.textContent = '✓ Token有效，连接成功' + (workingProxy ? '（代理）' : '（直连）');
+        resultEl.textContent = '✓ Token有效' + (workingProxy ? '（代理）' : '（直连）') + '，可以创建账号';
     } catch (e) {
         resultEl.style.color = '#e74c3c';
         resultEl.textContent = '✗ ' + e.message;
@@ -239,10 +173,9 @@ async function doLogin() {
     const pwd = document.getElementById('adminPassword').value.trim();
     const tokenInput = document.getElementById('githubToken').value.trim();
     if (tokenInput) setToken(tokenInput);
-    if (!getToken()) { showToast('请先填写 GitHub Token'); return; }
+    if (!getToken()) { showToast('请先填写GitHub Token'); return; }
     if (!pwd) { showToast('请输入密码'); return; }
-    const hash = sha256(pwd);
-    if (hash === CONFIG.ADMIN_PASSWORD_HASH) {
+    if (sha256(pwd) === CONFIG.ADMIN_PASSWORD_HASH) {
         isLoggedIn = true;
         sessionStorage.setItem('aihelper_admin', '1');
         document.getElementById('loginView').style.display = 'none';
@@ -262,40 +195,29 @@ function doLogout() {
 }
 
 function promptToken() {
-    const t = prompt('输入 GitHub Token (需 repo 权限):', '');
+    const t = prompt('输入GitHub Token (需repo权限):', '');
     if (t && t.trim()) { setToken(t.trim()); showToast('Token已更新'); loadAccounts(); }
 }
 
 // ========== 账号管理 ==========
 async function loadAccounts() {
     const body = document.getElementById('accountListBody');
-    body.innerHTML = '<div class="loading"><p>加载账号列表...</p></div>';
+    body.innerHTML = '<div class="loading"><p>加载中...</p></div>';
     try {
         const { data } = await githubApi('GET', CONFIG.SERVER_PATH);
-        if (!Array.isArray(data)) {
-            body.innerHTML = '<div class="empty-state">暂无账号</div>';
-            updateStats([]);
-            return;
-        }
-        // 并行拉取所有账号信息
-        const dirs = data.filter(item => item.type === 'dir');
+        if (!Array.isArray(data)) { body.innerHTML = '<div class="empty-state">暂无账号</div>'; updateStats([]); return; }
+        const dirs = data.filter(i => i.type === 'dir');
         const results = await Promise.all(dirs.map(async item => {
-            const username = item.name;
+            const u = item.name;
             const [status, hash, avatar] = await Promise.all([
-                readRawFile(`${CONFIG.SERVER_PATH}/${username}/status`),
-                readRawFile(`${CONFIG.SERVER_PATH}/${username}/password.hash`),
-                readRawFile(`${CONFIG.SERVER_PATH}/${username}/avatar.b64`)
+                readRawFile(`${CONFIG.SERVER_PATH}/${u}/status`),
+                readRawFile(`${CONFIG.SERVER_PATH}/${u}/password.hash`),
+                readRawFile(`${CONFIG.SERVER_PATH}/${u}/avatar.b64`)
             ]);
-            return {
-                username,
-                status: (status || 'enabled').trim(),
-                passwordHash: (hash || '').trim(),
-                avatar: (avatar || '').trim()
-            };
+            return { username: u, status: (status || 'enabled').trim(), passwordHash: (hash || '').trim(), avatar: (avatar || '').trim() };
         }));
         accounts = results;
-        renderAccounts();
-        updateStats(accounts);
+        renderAccounts(); updateStats(accounts);
         setSyncStatus('已同步 ' + new Date().toLocaleTimeString());
     } catch (e) {
         body.innerHTML = `<div class="empty-state">加载失败: ${e.message}</div>`;
@@ -305,10 +227,7 @@ async function loadAccounts() {
 
 function renderAccounts() {
     const body = document.getElementById('accountListBody');
-    if (accounts.length === 0) {
-        body.innerHTML = '<div class="empty-state">暂无账号，点击上方添加</div>';
-        return;
-    }
+    if (accounts.length === 0) { body.innerHTML = '<div class="empty-state">暂无账号</div>'; return; }
     body.innerHTML = accounts.map(acc => `
         <div class="account-item">
             <div class="account-avatar">
@@ -316,19 +235,14 @@ function renderAccounts() {
             </div>
             <div class="account-info">
                 <div class="account-name">${escapeHtml(acc.username)}</div>
-                <div class="account-status ${acc.status === 'banned' ? 'status-banned' : 'status-enabled'}">
-                    ${acc.status === 'banned' ? '已封禁' : '正常启用'}
-                </div>
+                <div class="account-status ${acc.status === 'banned' ? 'status-banned' : 'status-enabled'}">${acc.status === 'banned' ? '已封禁' : '正常启用'}</div>
             </div>
             <div class="account-actions">
-                <button class="btn btn-sm ${acc.status === 'banned' ? 'btn-success' : 'btn-warning'}" onclick="toggleBan('${escapeHtml(acc.username)}')">
-                    ${acc.status === 'banned' ? '解封' : '封禁'}
-                </button>
+                <button class="btn btn-sm ${acc.status === 'banned' ? 'btn-success' : 'btn-warning'}" onclick="toggleBan('${escapeHtml(acc.username)}')">${acc.status === 'banned' ? '解封' : '封禁'}</button>
                 <button class="btn btn-sm" style="background:#3498db;color:#fff;" onclick="changeAvatar('${escapeHtml(acc.username)}')">头像</button>
                 <button class="btn btn-sm btn-danger" onclick="deleteAccount('${escapeHtml(acc.username)}')">删除</button>
             </div>
-        </div>
-    `).join('');
+        </div>`).join('');
 }
 
 function updateStats(list) {
@@ -337,28 +251,25 @@ function updateStats(list) {
     document.getElementById('bannedCount').textContent = list.filter(a => a.status === 'banned').length;
 }
 
-function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-}
+function escapeHtml(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
 
-// ========== 添加账号 ==========
+// ========== 添加账号（防重复提交） ==========
 async function addAccount() {
+    if (isCreating) { showToast('正在创建中，请稍候...'); return; }
     const username = document.getElementById('newUsername').value.trim();
     const password = document.getElementById('newPassword').value;
     const avatarFile = document.getElementById('newAvatar').files[0];
     if (!username || !password) { showToast('请填写用户名和密码'); return; }
     if (!/^[a-zA-Z0-9_-]+$/.test(username)) { showToast('用户名只能含字母数字下划线'); return; }
 
-    const hash = sha256(password);
-    const path = `${CONFIG.SERVER_PATH}/${username}`;
+    isCreating = true;
     const btn = document.getElementById('btnAddAccount');
-    btn.disabled = true;
-    btn.textContent = '创建中...';
+    if (btn) { btn.disabled = true; btn.textContent = '创建中...'; }
 
     try {
-        showToast('正在创建...');
+        showToast('正在创建账号...');
+        const hash = sha256(password);
+        const path = `${CONFIG.SERVER_PATH}/${username}`;
         await createFile(`${path}/password.hash`, hash, `Add account: ${username}`);
         await createFile(`${path}/status`, 'enabled', `Set status for ${username}`);
         if (avatarFile) {
@@ -373,68 +284,51 @@ async function addAccount() {
     } catch (e) {
         showToast('创建失败: ' + e.message);
     } finally {
-        btn.disabled = false;
-        btn.textContent = '添加账号';
+        isCreating = false;
+        if (btn) { btn.disabled = false; btn.textContent = '添加账号'; }
     }
 }
 
-// ========== 删除账号 ==========
 async function deleteAccount(username) {
     if (!confirm(`确定删除账号 ${username}？`)) return;
     try {
         showToast('正在删除...');
         const path = `${CONFIG.SERVER_PATH}/${username}`;
-        // 并行删除所有文件
-        await Promise.allSettled([
-            deleteFile(`${path}/password.hash`),
-            deleteFile(`${path}/status`),
-            deleteFile(`${path}/avatar.b64`)
-        ]);
+        await Promise.allSettled([deleteFile(`${path}/password.hash`), deleteFile(`${path}/status`), deleteFile(`${path}/avatar.b64`)]);
         showToast(`账号 ${username} 已删除`);
         loadAccounts();
-    } catch (e) {
-        showToast('删除失败: ' + e.message);
-    }
+    } catch (e) { showToast('删除失败: ' + e.message); }
 }
 
-// ========== 封禁/解封 ==========
 async function toggleBan(username) {
     const acc = accounts.find(a => a.username === username);
     if (!acc) return;
     const newStatus = acc.status === 'banned' ? 'enabled' : 'banned';
     try {
         showToast(newStatus === 'banned' ? '正在封禁...' : '正在解封...');
-        await createFile(`${CONFIG.SERVER_PATH}/${username}/status`, newStatus,
-            `${newStatus === 'banned' ? 'Ban' : 'Unban'} ${username}`);
+        await createFile(`${CONFIG.SERVER_PATH}/${username}/status`, newStatus, `${newStatus === 'banned' ? 'Ban' : 'Unban'} ${username}`);
         showToast(`账号 ${username} 已${newStatus === 'banned' ? '封禁' : '解封'}`);
         loadAccounts();
-    } catch (e) {
-        showToast('操作失败: ' + e.message);
-    }
+    } catch (e) { showToast('操作失败: ' + e.message); }
 }
 
-// ========== 修改头像（带压缩） ==========
 async function changeAvatar(username) {
     const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
+    input.type = 'file'; input.accept = 'image/*';
     input.onchange = async () => {
-        const file = input.files[0];
-        if (!file) return;
+        const file = input.files[0]; if (!file) return;
         try {
             showToast('正在处理头像...');
             const b64 = await compressImage(file);
             await createFile(`${CONFIG.SERVER_PATH}/${username}/avatar.b64`, b64, `Update avatar for ${username}`);
             showToast('头像更新成功');
             loadAccounts();
-        } catch (e) {
-            showToast('头像更新失败: ' + e.message);
-        }
+        } catch (e) { showToast('头像失败: ' + e.message); }
     };
     input.click();
 }
 
-// 图片压缩：缩放至128x128，JPEG质量0.8，输出纯base64
+// 图片压缩 128x128 JPEG
 function compressImage(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -442,26 +336,18 @@ function compressImage(file) {
             const img = new Image();
             img.onload = () => {
                 const canvas = document.createElement('canvas');
-                const size = 128;
-                canvas.width = size;
-                canvas.height = size;
+                const size = 128; canvas.width = size; canvas.height = size;
                 const ctx = canvas.getContext('2d');
-                // 居中裁剪
                 const scale = Math.max(size / img.width, size / img.height);
-                const w = img.width * scale, h = img.height * scale;
-                ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-                resolve(dataUrl.split(',')[1]); // 只返回base64部分
+                ctx.drawImage(img, (size - img.width * scale) / 2, (size - img.height * scale) / 2, img.width * scale, img.height * scale);
+                resolve(canvas.toDataURL('image/jpeg', 0.8).split(',')[1]);
             };
-            img.onerror = reject;
-            img.src = e.target.result;
+            img.onerror = reject; img.src = e.target.result;
         };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
+        reader.onerror = reject; reader.readAsDataURL(file);
     });
 }
 
-// ========== 初始化 ==========
 window.onload = function() {
     if (sessionStorage.getItem('aihelper_admin') === '1') {
         isLoggedIn = true;
