@@ -11,7 +11,7 @@
     <div id="loginView">
         <div class="login-box">
             <h2>AI帮助器 管理后台</h2>
-            <input type="password" id="adminPassword" placeholder="管理员密码" onkeypress="if(event.key==='Enter')doLogin()">
+            <input type="password" id="adminPassword" placeholder="管理员密码" autocomplete="off" onkeypress="if(event.key==='Enter')doLogin()">
             <div style="position:relative;">
                 <input type="password" id="githubToken" placeholder="GitHub Token (需repo权限)" style="margin-bottom:8px;padding-right:80px;">
                 <button class="btn btn-sm" style="position:absolute;right:4px;top:4px;background:#2a2a40;color:#00d4ff;font-size:11px;padding:6px 10px;" onclick="testToken()">测试</button>
