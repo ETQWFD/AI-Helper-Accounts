@@ -73,45 +73,69 @@ function showToast(msg) {
 
 function setSyncStatus(text) { document.getElementById('syncStatus').textContent = '同步状态: ' + text; }
 
+// ========== XMLHttpRequest 网络层（兼容所有浏览器/WebView） ==========
+function xhrRequest(method, url, headers, body, timeoutMs) {
+    return new Promise((resolve, reject) => {
+        let xhr;
+        try { xhr = new XMLHttpRequest(); } catch (e) { reject(new Error('浏览器不支持XHR')); return; }
+        try {
+            xhr.open(method, url, true);
+            if (headers) {
+                for (const k in headers) {
+                    try { xhr.setRequestHeader(k, String(headers[k])); } catch (e) {}
+                }
+            }
+            xhr.timeout = timeoutMs;
+            xhr.ontimeout = function() { reject(new Error('连接超时')); };
+            xhr.onerror = function() { reject(new Error('网络错误')); };
+            xhr.onload = function() {
+                let data = {};
+                try { data = JSON.parse(xhr.responseText); } catch { data = { message: xhr.responseText ? xhr.responseText.substring(0, 200) : '' }; }
+                resolve({ status: xhr.status, data: data, raw: xhr.responseText });
+            };
+            xhr.send(body || null);
+        } catch (e) {
+            reject(new Error('请求初始化失败: ' + e.message));
+        }
+    });
+}
+
 // ========== GitHub API ==========
 async function githubApi(method, path, body) {
     const isWrite = (method === 'PUT' || method === 'DELETE');
     const urls = getApiUrls(path, isWrite);
-    const opts = {
-        method: method,
-        headers: { 'Authorization': `token ${getToken()}`, 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
+    const headers = {
+        'Authorization': 'token ' + String(getToken() || ''),
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
     };
-    if (body) opts.body = JSON.stringify(body);
-    const timeout = isWrite ? 10000 : 8000;
+    const payload = body ? JSON.stringify(body) : null;
+    const timeout = isWrite ? 12000 : 10000;
     let lastError = '';
     for (let ui = 0; ui < urls.length; ui++) {
         try {
-            const ctrl = new AbortController();
-            const tid = setTimeout(() => ctrl.abort(), timeout);
-            opts.signal = ctrl.signal;
-            const resp = await fetch(urls[ui], opts);
-            clearTimeout(tid);
-            const text = await resp.text();
-            let data = {}; try { data = JSON.parse(text); } catch { data = { message: text.substring(0, 200) }; }
-            if (resp.ok) {
-                if (!isWrite && ui > 0) { for (const p of CONFIG.PROXIES) { if (p && urls[ui].startsWith(p)) { workingProxy = p; break; } } }
-                return { ok: true, data };
+            const resp = await xhrRequest(method, urls[ui], headers, payload, timeout);
+            if (resp.status >= 200 && resp.status < 300) {
+                if (!isWrite && ui > 0) {
+                    for (const p of CONFIG.PROXIES) { if (p && urls[ui].indexOf(p) === 0) { workingProxy = p; break; } }
+                }
+                return { ok: true, data: resp.data };
             }
             if (resp.status === 401) throw new Error('Bad credentials(401) - Token无效或已过期');
             if (resp.status === 403) {
-                if (data.message && data.message.includes('rate limit')) throw new Error('API限流，请等1分钟再试');
+                if (resp.data.message && String(resp.data.message).indexOf('rate limit') >= 0) throw new Error('API限流，请等1分钟再试');
                 throw new Error('权限不足(403) - Token需要repo权限');
             }
             if (resp.status === 404) { if (isWrite) { lastError = '404-无权限或不存在'; continue; } throw new Error('404-不存在'); }
             if (resp.status === 422) throw new Error('422-文件已存在或参数错误');
-            lastError = `HTTP${resp.status}: ${data.message || ''}`;
+            lastError = 'HTTP' + resp.status + ': ' + (resp.data.message || '');
             if (resp.status < 500 && !isWrite) break;
         } catch (e) {
-            lastError = e.message.includes('Abort') ? '连接超时' : e.message;
-            if (e.message.includes('Bad credentials') || e.message.includes('限流') || e.message.includes('权限不足') || e.message.includes('422')) throw e;
+            lastError = e.message;
+            if (e.message.indexOf('Bad credentials') >= 0 || e.message.indexOf('限流') >= 0 || e.message.indexOf('权限不足') >= 0 || e.message.indexOf('422') >= 0) throw e;
         }
     }
-    throw new Error(lastError || '所有连接失败');
+    throw new Error(lastError || '所有连接方式均失败，请检查网络');
 }
 
 async function getFileSha(path) {
@@ -141,11 +165,10 @@ async function deleteFile(path) {
 async function readRawFile(path) {
     for (const url of getRawUrls(path)) {
         try {
-            const ctrl = new AbortController();
-            const tid = setTimeout(() => ctrl.abort(), 5000);
-            const resp = await fetch(url, { signal: ctrl.signal });
-            clearTimeout(tid);
-            if (resp.ok) return await resp.text();
+            const resp = await xhrRequest('GET', url, null, null, 6000);
+            if (resp.status >= 200 && resp.status < 300) {
+                return resp.raw !== undefined && resp.raw !== null ? resp.raw : (typeof resp.data === 'string' ? resp.data : '');
+            }
         } catch { /* next */ }
     }
     return null;
