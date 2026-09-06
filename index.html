@@ -12,8 +12,9 @@
         <div class="login-box">
             <h2>AI帮助器 管理后台</h2>
             <input type="password" id="adminPassword" placeholder="管理员密码" onkeypress="if(event.key==='Enter')doLogin()">
+            <input type="password" id="githubToken" placeholder="GitHub Token (首次使用需填写)" style="margin-bottom:8px;">
             <button class="btn btn-primary" onclick="doLogin()">登录</button>
-            <p style="text-align:center;margin-top:16px;font-size:11px;color:#555;">默认密码: AIHelper@2026</p>
+            <p style="text-align:center;margin-top:16px;font-size:11px;color:#555;">默认密码: AIHelper@2026<br>Token保存于本地浏览器，不上传服务器</p>
         </div>
     </div>
 
@@ -21,8 +22,9 @@
     <div id="dashboardView" style="display:none;">
         <div class="header">
             <h1>AI帮助器 账号管理</h1>
-            <div style="display:flex;align-items:center;gap:12px;">
+            <div style="display:flex;align-items:center;gap:8px;">
                 <span class="user-info" id="syncStatus">同步状态: 未连接</span>
+                <button class="btn btn-sm logout-btn" onclick="promptToken()">Token</button>
                 <button class="btn btn-sm logout-btn" onclick="doLogout()">退出</button>
             </div>
         </div>
