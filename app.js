@@ -5,6 +5,22 @@ const RAW_BASE = `https://raw.githubusercontent.com/${CONFIG.GITHUB_OWNER}/${CON
 let isLoggedIn = false;
 let accounts = [];
 
+// ========== 代理设置 ==========
+function useProxy() {
+    return localStorage.getItem('aihelper_use_proxy') === '1';
+}
+function setProxy(enabled) {
+    localStorage.setItem('aihelper_use_proxy', enabled ? '1' : '0');
+}
+function apiUrl(path) {
+    const direct = `${API_BASE}/contents/${path}?ref=${CONFIG.GITHUB_BRANCH}`;
+    return useProxy() ? CONFIG.PROXY_URL + direct : direct;
+}
+function rawUrl(path) {
+    const direct = `${RAW_BASE}/${path}`;
+    return useProxy() ? CONFIG.PROXY_URL + direct : direct;
+}
+
 // ========== Token 管理 ==========
 function getToken() {
     return localStorage.getItem('aihelper_github_token') || '';
@@ -48,7 +64,7 @@ function setSyncStatus(text) {
 
 // ========== GitHub API ==========
 async function githubApi(method, path, body) {
-    const url = `${API_BASE}/contents/${path}?ref=${CONFIG.GITHUB_BRANCH}`;
+    const url = apiUrl(path);
     const opts = {
         method: method,
         headers: {
@@ -58,12 +74,31 @@ async function githubApi(method, path, body) {
         }
     };
     if (body) opts.body = JSON.stringify(body);
-    const resp = await fetch(url, opts);
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok && method !== 'GET') {
-        throw new Error(data.message || `API错误 ${resp.status}`);
+
+    // 重试最多3次
+    let lastError = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            const resp = await fetch(url, opts);
+            const text = await resp.text();
+            let data = {};
+            try { data = JSON.parse(text); } catch { data = { message: text.substring(0, 200) }; }
+            if (resp.ok) return { ok: true, data };
+            if (resp.status === 401) {
+                throw new Error('Bad credentials - Token无效或已过期，请重新输入');
+            }
+            if (resp.status === 403) {
+                throw new Error('权限不足 - Token需要repo权限，或API调用超限');
+            }
+            lastError = data.message || `HTTP ${resp.status}: ${text.substring(0,150)}`;
+            if (resp.status < 500) break; // 4xx不重试
+        } catch (e) {
+            lastError = e.message;
+            if (e.message.includes('Bad credentials') || e.message.includes('权限不足')) break;
+        }
+        await new Promise(r => setTimeout(r, 800));
     }
-    return { ok: resp.ok, data };
+    throw new Error(lastError || '网络请求失败，请检查网络或开启代理');
 }
 
 async function getFileSha(path) {
@@ -96,7 +131,7 @@ async function deleteFile(path) {
 
 async function readRawFile(path) {
     try {
-        const resp = await fetch(`${RAW_BASE}/${path}`);
+        const resp = await fetch(rawUrl(path));
         if (!resp.ok) return null;
         return await resp.text();
     } catch { return null; }
@@ -114,7 +149,8 @@ async function testToken() {
     resultEl.style.color = '#888';
     resultEl.textContent = '测试中...';
     try {
-        const resp = await fetch('https://api.github.com/user', {
+        const testUrl = useProxy() ? CONFIG.PROXY_URL + 'https://api.github.com/user' : 'https://api.github.com/user';
+        const resp = await fetch(testUrl, {
             headers: { 'Authorization': `token ${tokenInput}`, 'Accept': 'application/vnd.github.v3+json' }
         });
         if (resp.ok) {
@@ -287,7 +323,13 @@ async function addAccount() {
         document.getElementById('newAvatar').value = '';
         loadAccounts();
     } catch (e) {
-        showToast('创建失败: ' + e.message);
+        let hint = '';
+        if (e.message.includes('Bad credentials') || e.message.includes('Token')) {
+            hint = '。请点右上角Token按钮重新输入，确保勾选了repo权限';
+        } else if (e.message.includes('网络') || e.message.includes('Failed')) {
+            hint = '。请检查网络，或在登录页勾选"启用国内代理"';
+        }
+        showToast('创建失败: ' + e.message + hint);
     }
 }
 
@@ -361,6 +403,9 @@ function fileToBase64(file) {
 
 // ========== 初始化 ==========
 window.onload = function() {
+    // 初始化代理复选框
+    const proxyCb = document.getElementById('useProxy');
+    if (proxyCb) proxyCb.checked = useProxy();
     if (sessionStorage.getItem('aihelper_admin') === '1') {
         isLoggedIn = true;
         document.getElementById('loginView').style.display = 'none';
