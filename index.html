@@ -16,6 +16,12 @@
                 <input type="password" id="githubToken" placeholder="GitHub Token (需repo权限)" style="margin-bottom:8px;padding-right:80px;">
                 <button class="btn btn-sm" style="position:absolute;right:4px;top:4px;background:#2a2a40;color:#00d4ff;font-size:11px;padding:6px 10px;" onclick="testToken()">测试</button>
             </div>
+            <div style="text-align:left;margin-bottom:12px;">
+                <label style="font-size:12px;color:#889;cursor:pointer;">
+                    <input type="checkbox" id="useProxy" style="margin-right:6px;" onchange="setProxy(this.checked)">
+                    启用国内代理（GitHub API 连接超时时勾选）
+                </label>
+            </div>
             <button class="btn btn-primary" onclick="doLogin()">登录</button>
             <p style="text-align:center;margin-top:16px;font-size:11px;color:#555;">
                 默认密码: AIHelper@2026<br>
