@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI帮助器 - 账号管理后台</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- 登录界面 -->
+    <div id="loginView">
+        <div class="login-box">
+            <h2>AI帮助器 管理后台</h2>
+            <input type="password" id="adminPassword" placeholder="管理员密码" onkeypress="if(event.key==='Enter')doLogin()">
+            <button class="btn btn-primary" onclick="doLogin()">登录</button>
+            <p style="text-align:center;margin-top:16px;font-size:11px;color:#555;">默认密码: AIHelper@2026</p>
+        </div>
+    </div>
+
+    <!-- 管理界面 -->
+    <div id="dashboardView" style="display:none;">
+        <div class="header">
+            <h1>AI帮助器 账号管理</h1>
+            <div style="display:flex;align-items:center;gap:12px;">
+                <span class="user-info" id="syncStatus">同步状态: 未连接</span>
+                <button class="btn btn-sm logout-btn" onclick="doLogout()">退出</button>
+            </div>
+        </div>
+        <div class="container">
+            <div class="stats-bar">
+                <div class="stat-card">
+                    <div class="num" id="totalCount">0</div>
+                    <div class="label">总账号数</div>
+                </div>
+                <div class="stat-card">
+                    <div class="num" id="enabledCount" style="color:#27ae60;">0</div>
+                    <div class="label">正常启用</div>
+                </div>
+                <div class="stat-card">
+                    <div class="num" id="bannedCount" style="color:#e74c3c;">0</div>
+                    <div class="label">已封禁</div>
+                </div>
+            </div>
+
+            <div class="add-section">
+                <h3>添加账号</h3>
+                <div class="add-form">
+                    <div class="field">
+                        <label>用户名</label>
+                        <input type="text" id="newUsername" placeholder="用户名">
+                    </div>
+                    <div class="field">
+                        <label>密码</label>
+                        <input type="text" id="newPassword" placeholder="设置密码">
+                    </div>
+                    <div class="field">
+                        <label>头像 (可选)</label>
+                        <input type="file" id="newAvatar" accept="image/*" style="padding:8px;">
+                    </div>
+                    <button class="btn btn-primary" style="width:auto;" onclick="addAccount()">添加账号</button>
+                </div>
+            </div>
+
+            <div class="account-list">
+                <h3>账号列表</h3>
+                <div id="accountListBody">
+                    <div class="loading"><div class="spinner"></div><p style="margin-top:12px;">加载中...</p></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
