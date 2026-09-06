@@ -43,11 +43,59 @@ function clearToken() {
 }
 
 // ========== 工具函数 ==========
-async function sha256(text) {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(text);
-    const hash = await crypto.subtle.digest('SHA-256', data);
-    return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+// 纯JS SHA-256（不依赖crypto.subtle，兼容所有环境）
+function sha256(ascii) {
+    function rightRotate(value, amount) {
+        return (value >>> amount) | (value << (32 - amount));
+    }
+    var mathPow = Math.pow;
+    var maxWord = mathPow(2, 32);
+    var lengthProperty = 'length';
+    var i, j;
+    var result = '';
+    var words = [];
+    var asciiBitLength = ascii[lengthProperty] * 8;
+    var hash = sha256.h = sha256.h || [];
+    var k = sha256.k = sha256.k || [];
+    var primeCounter = k[lengthProperty];
+    var isComposite = {};
+    for (var candidate = 2; primeCounter < 64; candidate++) {
+        if (!isComposite[candidate]) {
+            for (i = 0; i < 313; i += candidate) isComposite[i] = candidate;
+            hash[primeCounter] = (mathPow(candidate, .5) * maxWord) | 0;
+            k[primeCounter++] = (mathPow(candidate, 1 / 3) * maxWord) | 0;
+        }
+    }
+    ascii += '\x80';
+    while (ascii[lengthProperty] % 64 - 56) ascii += '\x00';
+    for (i = 0; i < ascii[lengthProperty]; i++) {
+        j = ascii.charCodeAt(i);
+        if (j >> 8) return;
+        words[i >> 2] |= j << ((3 - i) % 4) * 8;
+    }
+    words[words[lengthProperty]] = ((asciiBitLength / maxWord) | 0);
+    words[words[lengthProperty]] = (asciiBitLength);
+    for (j = 0; j < words[lengthProperty];) {
+        var w = words.slice(j, j += 16);
+        var oldHash = hash;
+        hash = hash.slice(0, 8);
+        for (i = 0; i < 64; i++) {
+            var w15 = w[i - 15], w2 = w[i - 2];
+            var a = hash[0], e = hash[4];
+            var temp1 = hash[7] + (rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25)) + ((e & hash[5]) ^ ((~e) & hash[6])) + k[i] + (w[i] = (i < 16) ? w[i] : (w[i - 16] + (rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3)) + w[i - 7] + (rightRotate(w[i - 2], 17) ^ rightRotate(w[i - 2], 19) ^ (w[i - 2] >>> 10))) | 0);
+            var temp2 = (rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22)) + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+            hash = [(temp1 + temp2) | 0].concat(hash);
+            hash[4] = (hash[4] + temp1) | 0;
+        }
+        for (i = 0; i < 8; i++) hash[i] = (hash[i] + oldHash[i]) | 0;
+    }
+    for (i = 0; i < 8; i++) {
+        for (j = 3; j + 1; j--) {
+            var b = (hash[i] >> (j * 8)) & 255;
+            result += (b < 16 ? 0 : '') + b.toString(16);
+        }
+    }
+    return result;
 }
 
 function b64encode(str) {
@@ -193,7 +241,7 @@ async function doLogin() {
         return;
     }
     if (!pwd) { showToast('请输入密码'); return; }
-    const hash = await sha256(pwd);
+    const hash = sha256(pwd);
     if (hash === CONFIG.ADMIN_PASSWORD_HASH) {
         isLoggedIn = true;
         sessionStorage.setItem('aihelper_admin', '1');
@@ -202,7 +250,7 @@ async function doLogin() {
         setSyncStatus('已连接');
         loadAccounts();
     } else {
-        showToast('密码错误');
+        showToast('密码错误。输入长度:' + pwd.length + ' 哈希前8位:' + hash.substring(0,8));
     }
 }
 
@@ -319,7 +367,7 @@ async function addAccount() {
     if (!username || !password) { showToast('请填写用户名和密码'); return; }
     if (!/^[a-zA-Z0-9_-]+$/.test(username)) { showToast('用户名只能包含字母数字下划线'); return; }
 
-    const hash = await sha256(password);
+    const hash = sha256(password);
     const path = `${CONFIG.SERVER_PATH}/${username}`;
 
     try {
