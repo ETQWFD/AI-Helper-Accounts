@@ -185,7 +185,7 @@ async function testToken() {
 }
 
 async function doLogin() {
-    const pwd = document.getElementById('adminPassword').value;
+    const pwd = document.getElementById('adminPassword').value.trim();
     const tokenInput = document.getElementById('githubToken').value.trim();
     if (tokenInput) setToken(tokenInput);
     if (!getToken()) {
