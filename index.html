@@ -12,9 +12,17 @@
         <div class="login-box">
             <h2>AI帮助器 管理后台</h2>
             <input type="password" id="adminPassword" placeholder="管理员密码" onkeypress="if(event.key==='Enter')doLogin()">
-            <input type="password" id="githubToken" placeholder="GitHub Token (首次使用需填写)" style="margin-bottom:8px;">
+            <div style="position:relative;">
+                <input type="password" id="githubToken" placeholder="GitHub Token (需repo权限)" style="margin-bottom:8px;padding-right:80px;">
+                <button class="btn btn-sm" style="position:absolute;right:4px;top:4px;background:#2a2a40;color:#00d4ff;font-size:11px;padding:6px 10px;" onclick="testToken()">测试</button>
+            </div>
             <button class="btn btn-primary" onclick="doLogin()">登录</button>
-            <p style="text-align:center;margin-top:16px;font-size:11px;color:#555;">默认密码: AIHelper@2026<br>Token保存于本地浏览器，不上传服务器</p>
+            <p style="text-align:center;margin-top:16px;font-size:11px;color:#555;">
+                默认密码: AIHelper@2026<br>
+                Token获取: GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → 勾选 repo 权限 → Generate<br>
+                Token仅保存于本地浏览器，不上传服务器
+            </p>
+            <p id="tokenTestResult" style="text-align:center;font-size:12px;margin-top:8px;min-height:16px;"></p>
         </div>
     </div>
 
