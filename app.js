@@ -103,6 +103,35 @@ async function readRawFile(path) {
 }
 
 // ========== 登录 ==========
+async function testToken() {
+    const tokenInput = document.getElementById('githubToken').value.trim();
+    const resultEl = document.getElementById('tokenTestResult');
+    if (!tokenInput) {
+        resultEl.style.color = '#e74c3c';
+        resultEl.textContent = '请先输入 Token';
+        return;
+    }
+    resultEl.style.color = '#888';
+    resultEl.textContent = '测试中...';
+    try {
+        const resp = await fetch('https://api.github.com/user', {
+            headers: { 'Authorization': `token ${tokenInput}`, 'Accept': 'application/vnd.github.v3+json' }
+        });
+        if (resp.ok) {
+            const data = await resp.json();
+            setToken(tokenInput);
+            resultEl.style.color = '#27ae60';
+            resultEl.textContent = `✓ Token有效 (用户: ${data.login})`;
+        } else {
+            resultEl.style.color = '#e74c3c';
+            resultEl.textContent = `✗ Token无效 (${resp.status})`;
+        }
+    } catch (e) {
+        resultEl.style.color = '#e74c3c';
+        resultEl.textContent = '✗ 网络错误: ' + e.message;
+    }
+}
+
 async function doLogin() {
     const pwd = document.getElementById('adminPassword').value;
     const tokenInput = document.getElementById('githubToken').value.trim();
