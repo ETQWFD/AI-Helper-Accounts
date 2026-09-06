@@ -16,16 +16,11 @@
                 <input type="password" id="githubToken" placeholder="GitHub Token (需repo权限)" style="margin-bottom:8px;padding-right:80px;">
                 <button class="btn btn-sm" style="position:absolute;right:4px;top:4px;background:#2a2a40;color:#00d4ff;font-size:11px;padding:6px 10px;" onclick="testToken()">测试</button>
             </div>
-            <div style="text-align:left;margin-bottom:12px;">
-                <label style="font-size:12px;color:#889;cursor:pointer;">
-                    <input type="checkbox" id="useProxy" style="margin-right:6px;" onchange="setProxy(this.checked)">
-                    启用国内代理（GitHub API 连接超时时勾选）
-                </label>
-            </div>
             <button class="btn btn-primary" onclick="doLogin()">登录</button>
             <p style="text-align:center;margin-top:16px;font-size:11px;color:#555;">
                 默认密码: AIHelper@2026<br>
                 Token获取: GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → 勾选 repo 权限 → Generate<br>
+                网络自动切换直连和国内代理，无需手动设置<br>
                 Token仅保存于本地浏览器，不上传服务器
             </p>
             <p id="tokenTestResult" style="text-align:center;font-size:12px;margin-top:8px;min-height:16px;"></p>
