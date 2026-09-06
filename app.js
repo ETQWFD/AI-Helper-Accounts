@@ -5,20 +5,30 @@ const RAW_BASE = `https://raw.githubusercontent.com/${CONFIG.GITHUB_OWNER}/${CON
 let isLoggedIn = false;
 let accounts = [];
 
-// ========== 代理设置 ==========
-function useProxy() {
-    return localStorage.getItem('aihelper_use_proxy') === '1';
-}
-function setProxy(enabled) {
-    localStorage.setItem('aihelper_use_proxy', enabled ? '1' : '0');
-}
-function apiUrl(path) {
+// ========== 多代理自动切换 ==========
+let workingProxy = ""; // 记录当前可用的代理
+
+function getApiUrls(path) {
     const direct = `${API_BASE}/contents/${path}?ref=${CONFIG.GITHUB_BRANCH}`;
-    return useProxy() ? CONFIG.PROXY_URL + direct : direct;
+    const urls = [];
+    for (const p of CONFIG.PROXIES) {
+        urls.push(p ? p + direct : direct);
+    }
+    return urls;
 }
-function rawUrl(path) {
+
+function getRawUrls(path) {
     const direct = `${RAW_BASE}/${path}`;
-    return useProxy() ? CONFIG.PROXY_URL + direct : direct;
+    const urls = [];
+    for (const p of CONFIG.RAW_PROXIES) {
+        if (p === "https://raw.gitmirror.com/") {
+            // raw.gitmirror.com 需要替换域名
+            urls.push(direct.replace("https://raw.githubusercontent.com/", "https://raw.gitmirror.com/"));
+        } else {
+            urls.push(p ? p + direct : direct);
+        }
+    }
+    return urls;
 }
 
 // ========== Token 管理 ==========
@@ -62,9 +72,9 @@ function setSyncStatus(text) {
     document.getElementById('syncStatus').textContent = '同步状态: ' + text;
 }
 
-// ========== GitHub API ==========
+// ========== GitHub API（多代理自动重试） ==========
 async function githubApi(method, path, body) {
-    const url = apiUrl(path);
+    const urls = getApiUrls(path);
     const opts = {
         method: method,
         headers: {
@@ -75,30 +85,36 @@ async function githubApi(method, path, body) {
     };
     if (body) opts.body = JSON.stringify(body);
 
-    // 重试最多3次
     let lastError = '';
-    for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-            const resp = await fetch(url, opts);
-            const text = await resp.text();
-            let data = {};
-            try { data = JSON.parse(text); } catch { data = { message: text.substring(0, 200) }; }
-            if (resp.ok) return { ok: true, data };
-            if (resp.status === 401) {
-                throw new Error('Bad credentials - Token无效或已过期，请重新输入');
+    for (let ui = 0; ui < urls.length; ui++) {
+        const url = urls[ui];
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 12000);
+                opts.signal = controller.signal;
+                const resp = await fetch(url, opts);
+                clearTimeout(timeoutId);
+                const text = await resp.text();
+                let data = {};
+                try { data = JSON.parse(text); } catch { data = { message: text.substring(0, 200) }; }
+                if (resp.ok) {
+                    workingProxy = CONFIG.PROXIES[ui] || "";
+                    return { ok: true, data };
+                }
+                if (resp.status === 401) throw new Error('Bad credentials - Token无效，请检查Token是否正确且有repo权限');
+                if (resp.status === 403) throw new Error('权限不足 - Token需要repo权限，或API调用已超限');
+                if (resp.status === 404) throw new Error('文件不存在(404)');
+                lastError = data.message || `HTTP ${resp.status}`;
+                if (resp.status < 500) break;
+            } catch (e) {
+                lastError = e.message.includes('Abort') ? '连接超时' : e.message;
+                if (e.message.includes('Bad credentials') || e.message.includes('权限不足')) throw e;
             }
-            if (resp.status === 403) {
-                throw new Error('权限不足 - Token需要repo权限，或API调用超限');
-            }
-            lastError = data.message || `HTTP ${resp.status}: ${text.substring(0,150)}`;
-            if (resp.status < 500) break; // 4xx不重试
-        } catch (e) {
-            lastError = e.message;
-            if (e.message.includes('Bad credentials') || e.message.includes('权限不足')) break;
+            await new Promise(r => setTimeout(r, 500));
         }
-        await new Promise(r => setTimeout(r, 800));
     }
-    throw new Error(lastError || '网络请求失败，请检查网络或开启代理');
+    throw new Error(lastError || '所有连接方式均失败，请检查网络或Token');
 }
 
 async function getFileSha(path) {
@@ -130,11 +146,17 @@ async function deleteFile(path) {
 }
 
 async function readRawFile(path) {
-    try {
-        const resp = await fetch(rawUrl(path));
-        if (!resp.ok) return null;
-        return await resp.text();
-    } catch { return null; }
+    const urls = getRawUrls(path);
+    for (const url of urls) {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000);
+            const resp = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (resp.ok) return await resp.text();
+        } catch { /* try next */ }
+    }
+    return null;
 }
 
 // ========== 登录 ==========
@@ -147,24 +169,18 @@ async function testToken() {
         return;
     }
     resultEl.style.color = '#888';
-    resultEl.textContent = '测试中...';
+    resultEl.textContent = '测试中（自动尝试直连和代理）...';
+    setToken(tokenInput);
+
+    // 测试实际仓库API（比测试/user更准确）
+    const testPath = 'README.md';
     try {
-        const testUrl = useProxy() ? CONFIG.PROXY_URL + 'https://api.github.com/user' : 'https://api.github.com/user';
-        const resp = await fetch(testUrl, {
-            headers: { 'Authorization': `token ${tokenInput}`, 'Accept': 'application/vnd.github.v3+json' }
-        });
-        if (resp.ok) {
-            const data = await resp.json();
-            setToken(tokenInput);
-            resultEl.style.color = '#27ae60';
-            resultEl.textContent = `✓ Token有效 (用户: ${data.login})`;
-        } else {
-            resultEl.style.color = '#e74c3c';
-            resultEl.textContent = `✗ Token无效 (${resp.status})`;
-        }
+        const result = await githubApi('GET', testPath);
+        resultEl.style.color = '#27ae60';
+        resultEl.textContent = '✓ Token有效，连接成功' + (workingProxy ? '（通过代理）' : '（直连）');
     } catch (e) {
         resultEl.style.color = '#e74c3c';
-        resultEl.textContent = '✗ 网络错误: ' + e.message;
+        resultEl.textContent = '✗ ' + e.message;
     }
 }
 
@@ -403,9 +419,6 @@ function fileToBase64(file) {
 
 // ========== 初始化 ==========
 window.onload = function() {
-    // 初始化代理复选框
-    const proxyCb = document.getElementById('useProxy');
-    if (proxyCb) proxyCb.checked = useProxy();
     if (sessionStorage.getItem('aihelper_admin') === '1') {
         isLoggedIn = true;
         document.getElementById('loginView').style.display = 'none';
