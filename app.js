@@ -5,6 +5,17 @@ const RAW_BASE = `https://raw.githubusercontent.com/${CONFIG.GITHUB_OWNER}/${CON
 let isLoggedIn = false;
 let accounts = [];
 
+// ========== Token 管理 ==========
+function getToken() {
+    return localStorage.getItem('aihelper_github_token') || '';
+}
+function setToken(t) {
+    localStorage.setItem('aihelper_github_token', t);
+}
+function clearToken() {
+    localStorage.removeItem('aihelper_github_token');
+}
+
 // ========== 工具函数 ==========
 async function sha256(text) {
     const encoder = new TextEncoder();
@@ -41,7 +52,7 @@ async function githubApi(method, path, body) {
     const opts = {
         method: method,
         headers: {
-            'Authorization': `token ${CONFIG.GITHUB_TOKEN}`,
+            'Authorization': `token ${getToken()}`,
             'Accept': 'application/vnd.github.v3+json',
             'Content-Type': 'application/json'
         }
@@ -94,6 +105,12 @@ async function readRawFile(path) {
 // ========== 登录 ==========
 async function doLogin() {
     const pwd = document.getElementById('adminPassword').value;
+    const tokenInput = document.getElementById('githubToken').value.trim();
+    if (tokenInput) setToken(tokenInput);
+    if (!getToken()) {
+        showToast('请先填写 GitHub Token');
+        return;
+    }
     if (!pwd) { showToast('请输入密码'); return; }
     const hash = await sha256(pwd);
     if (hash === CONFIG.ADMIN_PASSWORD_HASH) {
@@ -114,6 +131,17 @@ function doLogout() {
     document.getElementById('loginView').style.display = 'block';
     document.getElementById('dashboardView').style.display = 'none';
     document.getElementById('adminPassword').value = '';
+    document.getElementById('githubToken').value = getToken();
+}
+
+function promptToken() {
+    const current = getToken();
+    const t = prompt('输入 GitHub Token (需有 repo 权限):', current ? current.substring(0,10) + '...' : '');
+    if (t && !t.includes('...')) {
+        setToken(t);
+        showToast('Token 已更新');
+        loadAccounts();
+    }
 }
 
 // ========== 账号管理 ==========
