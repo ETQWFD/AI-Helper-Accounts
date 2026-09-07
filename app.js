@@ -37,8 +37,11 @@ function getRawUrls(path) {
 }
 
 // ========== Token ==========
-function getToken() { return localStorage.getItem('aihelper_github_token') || ''; }
-function setToken(t) { localStorage.setItem('aihelper_github_token', t); }
+// 内置 Token（base64 解码，用户无需填写）
+let BUILTIN_TOKEN = '';
+try { BUILTIN_TOKEN = atob(CONFIG.GITHUB_TOKEN_B64 || ''); } catch (e) { BUILTIN_TOKEN = ''; }
+function getToken() { return localStorage.getItem('aihelper_github_token') || BUILTIN_TOKEN || ''; }
+function setToken(t) { if (t && t.trim()) localStorage.setItem('aihelper_github_token', t.trim()); }
 
 // ========== SHA-256 ==========
 function sha256(ascii) {
@@ -176,16 +179,14 @@ async function readRawFile(path) {
 
 // ========== 登录 ==========
 async function testToken() {
-    const tokenInput = document.getElementById('githubToken').value.trim();
     const resultEl = document.getElementById('tokenTestResult');
-    if (!tokenInput) { resultEl.style.color = '#e74c3c'; resultEl.textContent = '请先输入Token'; return; }
     resultEl.style.color = '#888'; resultEl.textContent = '测试中...';
-    setToken(tokenInput); workingProxy = "";
+    workingProxy = "";
     try {
         // 测试读权限
         await githubApi('GET', 'README.md');
         resultEl.style.color = '#27ae60';
-        resultEl.textContent = '✓ Token有效' + (workingProxy ? '（代理）' : '（直连）') + '，可以创建账号';
+        resultEl.textContent = '✓ 连接成功' + (workingProxy ? '（代理）' : '（直连）') + '，可以创建账号';
     } catch (e) {
         resultEl.style.color = '#e74c3c';
         resultEl.textContent = '✗ ' + e.message;
@@ -194,9 +195,7 @@ async function testToken() {
 
 async function doLogin() {
     const pwd = document.getElementById('adminPassword').value.trim();
-    const tokenInput = document.getElementById('githubToken').value.trim();
-    if (tokenInput) setToken(tokenInput);
-    if (!getToken()) { showToast('请先填写GitHub Token'); return; }
+    if (!getToken()) { showToast('Token配置异常，请刷新页面重试'); return; }
     if (!pwd) { showToast('请输入密码'); return; }
     if (sha256(pwd) === CONFIG.ADMIN_PASSWORD_HASH) {
         isLoggedIn = true;
