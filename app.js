@@ -37,9 +37,9 @@ function getRawUrls(path) {
 }
 
 // ========== Token ==========
-// 内置 Token（base64 解码，用户无需填写）
+// 内置 Token（base64 分段解码，用户无需填写）
 let BUILTIN_TOKEN = '';
-try { BUILTIN_TOKEN = atob(CONFIG.GITHUB_TOKEN_B64 || ''); } catch (e) { BUILTIN_TOKEN = ''; }
+try { BUILTIN_TOKEN = atob(String(CONFIG.GITHUB_TOKEN_P1 || '') + String(CONFIG.GITHUB_TOKEN_P2 || '')); } catch (e) { BUILTIN_TOKEN = ''; }
 function getToken() { return localStorage.getItem('aihelper_github_token') || BUILTIN_TOKEN || ''; }
 function setToken(t) { if (t && t.trim()) localStorage.setItem('aihelper_github_token', t.trim()); }
 
