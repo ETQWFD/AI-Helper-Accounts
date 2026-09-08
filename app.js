@@ -10,15 +10,16 @@ let isCreating = false; // 防重复提交
 // ========== 代理URL ==========
 function getApiUrls(path, preferDirect) {
     const direct = `${API_BASE}/contents/${path}?ref=${CONFIG.GITHUB_BRANCH}`;
-    const urls = [];
     if (preferDirect) {
-        urls.push(direct);
-        for (const p of CONFIG.PROXIES) { if (p) urls.push(p + direct); }
-    } else {
-        if (workingProxy) { urls.push(workingProxy + direct); urls.push(direct); }
-        else urls.push(direct);
-        for (const p of CONFIG.PROXIES) { if (p && p !== workingProxy) urls.push(p + direct); }
+        // 写操作（PUT/DELETE）：只走直连！
+        // 代理（ghproxy等）会剥离 Authorization 头或拒绝 PUT/DELETE（405），
+        // 导致 GitHub 返回 401/405，所以写操作绝不放代理
+        return [direct];
     }
+    const urls = [];
+    if (workingProxy) { urls.push(workingProxy + direct); urls.push(direct); }
+    else urls.push(direct);
+    for (const p of CONFIG.PROXIES) { if (p && p !== workingProxy) urls.push(p + direct); }
     return urls;
 }
 
@@ -113,31 +114,41 @@ async function githubApi(method, path, body) {
         'Content-Type': 'application/json'
     };
     const payload = body ? JSON.stringify(body) : null;
-    const timeout = isWrite ? 12000 : 10000;
+    // 写操作：直连慢，给足20s并重试3次；读操作：10s逐个通道尝试
+    const timeout = isWrite ? 20000 : 10000;
     let lastError = '';
     for (let ui = 0; ui < urls.length; ui++) {
-        try {
-            const resp = await xhrRequest(method, urls[ui], headers, payload, timeout);
-            if (resp.status >= 200 && resp.status < 300) {
-                if (!isWrite && ui > 0) {
-                    for (const p of CONFIG.PROXIES) { if (p && urls[ui].indexOf(p) === 0) { workingProxy = p; break; } }
+        // 写操作只有一个直连URL，循环3次重试
+        const retries = isWrite ? 3 : 1;
+        for (let ri = 0; ri < retries; ri++) {
+            try {
+                const resp = await xhrRequest(method, urls[ui], headers, payload, timeout);
+                if (resp.status >= 200 && resp.status < 300) {
+                    if (!isWrite && ui > 0) {
+                        for (const p of CONFIG.PROXIES) { if (p && urls[ui].indexOf(p) === 0) { workingProxy = p; break; } }
+                    }
+                    return { ok: true, data: resp.data };
                 }
-                return { ok: true, data: resp.data };
+                if (resp.status === 401) {
+                    if (isWrite) throw new Error('Token无效(401)：写入需要有效Token。请开启加速器/更换网络后重试，或在右上角Token处重新填写Token');
+                    throw new Error('Bad credentials(401) - Token无效或已过期');
+                }
+                if (resp.status === 403) {
+                    if (resp.data.message && String(resp.data.message).indexOf('rate limit') >= 0) throw new Error('API限流，请等1分钟再试');
+                    throw new Error('权限不足(403) - Token需要repo权限');
+                }
+                if (resp.status === 404) { if (isWrite) { lastError = '404-无权限或不存在'; break; } throw new Error('404-不存在'); }
+                if (resp.status === 422) throw new Error('422-文件已存在或参数错误');
+                lastError = 'HTTP' + resp.status + ': ' + (resp.data.message || '');
+                if (resp.status < 500 && !isWrite) break;
+            } catch (e) {
+                lastError = e.message;
+                if (e.message.indexOf('Bad credentials') >= 0 || e.message.indexOf('限流') >= 0 || e.message.indexOf('权限不足') >= 0 || e.message.indexOf('422') >= 0) throw e;
             }
-            if (resp.status === 401) throw new Error('Bad credentials(401) - Token无效或已过期');
-            if (resp.status === 403) {
-                if (resp.data.message && String(resp.data.message).indexOf('rate limit') >= 0) throw new Error('API限流，请等1分钟再试');
-                throw new Error('权限不足(403) - Token需要repo权限');
-            }
-            if (resp.status === 404) { if (isWrite) { lastError = '404-无权限或不存在'; continue; } throw new Error('404-不存在'); }
-            if (resp.status === 422) throw new Error('422-文件已存在或参数错误');
-            lastError = 'HTTP' + resp.status + ': ' + (resp.data.message || '');
-            if (resp.status < 500 && !isWrite) break;
-        } catch (e) {
-            lastError = e.message;
-            if (e.message.indexOf('Bad credentials') >= 0 || e.message.indexOf('限流') >= 0 || e.message.indexOf('权限不足') >= 0 || e.message.indexOf('422') >= 0) throw e;
         }
+        if (isWrite) break; // 写操作只走直连，无需尝试其他URL
     }
+    if (isWrite) throw new Error('写入失败：网络无法直连GitHub（已重试3次）。请开启VPN/加速器，或使用能直连GitHub的网络后重试');
     throw new Error(lastError || '所有连接方式均失败，请检查网络');
 }
 
